@@ -211,7 +211,7 @@ fn detect_diagram_kind(input: &str) -> Option<DiagramKind> {
         {
             return Some(DiagramKind::Flowchart);
         }
-        if looks_like_flowchart_edge_syntax(&without_comment) {
+        if looks_like_flowchart_edge_syntax(without_comment) {
             return Some(DiagramKind::Flowchart);
         }
         return None;
