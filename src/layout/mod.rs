@@ -253,11 +253,32 @@ fn normalize_graph_for_layout(graph: &Graph) -> Cow<'_, Graph> {
         .iter()
         .any(|id| !graph.nodes.contains_key(id));
 
-    if !needs_edge_nodes && !needs_sequence_nodes {
+    let connected_groups: Vec<usize> = if graph.kind == crate::ir::DiagramKind::Flowchart {
+        graph
+            .subgraphs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, sub)| {
+                let crosses_boundary = graph
+                    .edges
+                    .iter()
+                    .any(|edge| sub.nodes.contains(&edge.from) != sub.nodes.contains(&edge.to));
+                (sub.direction.is_some() && crosses_boundary).then_some(index)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if !needs_edge_nodes && !needs_sequence_nodes && connected_groups.is_empty() {
         return Cow::Borrowed(graph);
     }
 
     let mut normalized = graph.clone();
+    // Mermaid inherits the outer direction when a group's members link outside.
+    // Edges to the group itself are not member edges and do not trigger this rule.
+    for index in connected_groups {
+        normalized.subgraphs[index].direction = None;
+    }
     for edge in &graph.edges {
         normalized.ensure_node(&edge.from, None, None);
         normalized.ensure_node(&edge.to, None, None);
@@ -2295,7 +2316,7 @@ flowchart LR
     }
 
     #[test]
-    fn flowchart_subgraph_direction_fixture_keeps_lr_members_horizontal() {
+    fn connected_flowchart_subgraph_inherits_outer_direction() {
         let source =
             include_str!("../../tests/fixtures/layout_regressions/flowchart_subgraph_dir.mmd");
         let parsed = parse_mermaid(source).expect("failed to parse flowchart fixture");
@@ -2306,13 +2327,15 @@ flowchart LR
         let c = layout.nodes.get("C").unwrap();
 
         assert!(
-            a.x < b.x && b.x < c.x,
-            "LR subgraph should progress horizontally"
+            a.y < b.y && b.y < c.y,
+            "externally connected subgraph should inherit outer TD direction"
         );
-        assert!(
-            (a.y - b.y).abs() < 1.0 && (b.y - c.y).abs() < 1.0,
-            "LR subgraph should stay aligned on the cross-axis"
-        );
+        let inherited = parse_mermaid(&source.replace("direction LR", "")).unwrap();
+        let expected = compute_layout(&inherited.graph, &Theme::modern(), &LayoutConfig::default());
+        for id in ["A", "B", "C"] {
+            assert_eq!(layout.nodes[id].x, expected.nodes[id].x);
+            assert_eq!(layout.nodes[id].y, expected.nodes[id].y);
+        }
     }
 
     #[test]
