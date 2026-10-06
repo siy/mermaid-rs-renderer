@@ -10,6 +10,7 @@ static ENTITIES: Lazy<Regex> = Lazy::new(|| {
         .expect("constant entity pattern")
 });
 
+/// Decode one entity layer, retaining unknown entities and allocations without matches.
 fn decode(label: &mut String) {
     // Normalize Mermaid #name;/#123; entities, then decode exactly once. Doing
     // this after parsing preserves escaped syntax; SVG still XML-escapes text.
@@ -35,6 +36,8 @@ fn decode(label: &mut String) {
     }
 }
 
+/// Decode display labels after parsing without changing identifiers or graph topology.
+/// Call once per parsed graph; decoding again would expand intentionally escaped entities.
 pub(crate) fn decode_labels(graph: &mut Graph) {
     for node in graph.nodes.values_mut() {
         decode(&mut node.label);

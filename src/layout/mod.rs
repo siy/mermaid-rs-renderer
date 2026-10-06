@@ -301,6 +301,8 @@ fn externally_connected_subgraphs(graph: &Graph) -> Vec<usize> {
         .collect()
 }
 
+/// Materialize implicit nodes and inherited flowchart directions on a copy only
+/// when needed, preserving the caller's graph and borrowing already normalized input.
 fn normalize_graph_for_layout(graph: &Graph) -> Cow<'_, Graph> {
     let needs_edge_nodes = graph
         .edges

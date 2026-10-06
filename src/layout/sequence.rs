@@ -19,6 +19,7 @@ impl FrameBounds {
         max_y: f32::NEG_INFINITY,
     };
 
+    /// Return the union of two bounds; EMPTY is the identity for this operation.
     fn merge(self, other: Self) -> Self {
         Self {
             min_x: self.min_x.min(other.min_x),
@@ -36,6 +37,7 @@ struct FrameBoundsIndex {
 }
 
 impl FrameBoundsIndex {
+    /// Build a linear-space range index over bounds in message or note order.
     fn new(bounds: impl ExactSizeIterator<Item = FrameBounds>) -> Self {
         let len = bounds.len();
         let mut tree = vec![FrameBounds::EMPTY; len * 2];
@@ -48,6 +50,8 @@ impl FrameBoundsIndex {
         Self { tree, len }
     }
 
+    /// Return bounds for a half-open range, clamping endpoints to the indexed length.
+    /// Empty or reversed ranges return EMPTY, including queries on an empty index.
     fn query(&self, range: std::ops::Range<usize>) -> FrameBounds {
         let mut result = FrameBounds::EMPTY;
         let mut start = range.start.min(self.len) + self.len;
@@ -221,6 +225,8 @@ fn compute_sequence_lane_centers(
     centers
 }
 
+/// Lay out participants, messages, notes, and frames, using message and note
+/// ranges to include only the content owned by each frame.
 pub(super) fn compute_sequence_layout(
     graph: &Graph,
     theme: &Theme,
@@ -1491,6 +1497,8 @@ fn extend_bounds(
     *max_y = (*max_y).max(y + h);
 }
 
+/// Recompute sequence canvas bounds after label placement and translate the
+/// diagram as needed to keep its geometry within the measured canvas.
 pub(super) fn finalize_sequence_layout_bounds(layout: &mut Layout) {
     let DiagramData::Sequence(seq) = &mut layout.diagram else {
         return;

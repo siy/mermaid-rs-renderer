@@ -1772,6 +1772,8 @@ fn center_label_attachment_cap(kind: DiagramKind) -> Option<f32> {
     }
 }
 
+/// Bring unlocked labels within their diagram-specific edge gap while checking
+/// node collisions, label collisions, and foreign-edge crossings through spatial indexes.
 fn enforce_center_label_attachment_caps(
     edges: &mut [EdgeLayout],
     nodes: &BTreeMap<String, NodeLayout>,
@@ -3875,6 +3877,7 @@ struct ObstacleGrid {
 impl ObstacleGrid {
     const MAX_CELLS: i64 = 256;
 
+    /// Index rectangles by slice position, enforcing a minimum cell size of 16 units.
     fn new(cell: f32, rects: &[Rect]) -> Self {
         let mut grid = Self {
             cell: cell.max(16.0),
@@ -3888,6 +3891,8 @@ impl ObstacleGrid {
         grid
     }
 
+    /// Return inclusive cell bounds only when enumerating them fits the cell budget.
+    /// Invalid or oversized rectangles use the conservative full-scan path.
     fn cell_range(&self, rect: &Rect) -> Option<(i32, i32, i32, i32)> {
         if ![rect.0, rect.1, rect.2, rect.3]
             .iter()
@@ -3906,6 +3911,7 @@ impl ObstacleGrid {
         (width.checked_mul(height)? <= Self::MAX_CELLS).then_some((x0, y0, x1, y1))
     }
 
+    /// Insert a new obstacle index; remove its old rectangle before moving it.
     fn insert(&mut self, index: usize, rect: &Rect) {
         self.indices.insert(index);
         if let Some((x0, y0, x1, y1)) = self.cell_range(rect) {
@@ -3919,6 +3925,7 @@ impl ObstacleGrid {
         }
     }
 
+    /// Remove an obstacle using its original bounds and discard empty cell buckets.
     fn remove(&mut self, index: usize, rect: &Rect) {
         self.indices.remove(&index);
         self.oversized.remove(&index);
@@ -3938,6 +3945,8 @@ impl ObstacleGrid {
         }
     }
 
+    /// Yield unique candidate indices, including oversized obstacles.
+    /// Candidates can be false positives and require an exact geometry check.
     fn query(&self, rect: &Rect) -> impl Iterator<Item = usize> + '_ {
         let range = self.cell_range(rect);
         let (x0, y0, x1, y1) = range.unwrap_or((0, 0, -1, -1));
@@ -3977,6 +3986,8 @@ impl ObstacleGrid {
         }
     }
 
+    /// Sum exact overlaps in source-index order to preserve floating-point results.
+    /// The obstacle slice must contain the current rectangle for every indexed entry.
     fn overlap_sum(&self, rect: &Rect, obstacles: &[Rect]) -> f32 {
         self.query_ordered(rect)
             .into_iter()

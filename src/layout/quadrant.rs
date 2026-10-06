@@ -26,6 +26,8 @@ fn finite_unit_interval(value: f32) -> f32 {
     }
 }
 
+/// Place points in a fixed-size grid and expand the surrounding canvas for
+/// measured labels without changing the points' normalized coordinates.
 pub(super) fn compute_quadrant_layout(
     graph: &Graph,
     theme: &Theme,
