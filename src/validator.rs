@@ -258,9 +258,9 @@ fn is_block_group_open(trimmed: &str) -> bool {
 
 /// Path 4: lines that begin with an arrow operator.
 ///
-/// `--> X`, `---> X`, `==> X`, etc., with no source node before
-/// the arrow, are illegal in every mmdr-supported diagram kind.
-/// This catches accidental pastes or omitted source identifiers.
+/// `--> X`, `---> X`, `==> X`, etc. require a source node. Flowcharts
+/// may continue an eligible statement from the preceding non-comment line;
+/// other leading arrows indicate accidental pastes or omitted identifiers.
 fn check_leading_arrow(lines: &[&str]) -> Result<(), ParseError> {
     let flowchart = detect_balance_kind(lines) == BalanceKind::Flowchart;
     let mut previous = String::new();
