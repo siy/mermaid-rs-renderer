@@ -263,7 +263,7 @@ fn is_block_group_open(trimmed: &str) -> bool {
 /// other leading arrows indicate accidental pastes or omitted identifiers.
 fn check_leading_arrow(lines: &[&str]) -> Result<(), ParseError> {
     let flowchart = detect_balance_kind(lines) == BalanceKind::Flowchart;
-    let mut previous = String::new();
+    let mut previous = "";
     for (idx, raw) in lines.iter().enumerate() {
         let line_no = u32_from_index(idx);
         let trimmed = raw.trim_start();
@@ -273,10 +273,12 @@ fn check_leading_arrow(lines: &[&str]) -> Result<(), ParseError> {
         if starts_with_arrow(trimmed) {
             if flowchart
                 && crate::parser::starts_with_edge_token(trimmed)
-                && crate::parser::accepts_edge_continuation(&previous)
+                && crate::parser::accepts_edge_continuation(previous)
             {
-                previous.push(' ');
-                previous.push_str(trimmed);
+                // A continuation starts with an operator, so only its trailing
+                // semicolon can prevent another continuation. Borrow this line
+                // instead of repeatedly copying the accumulated statement.
+                previous = trimmed;
                 continue;
             }
             let col = col_of_first_nonws(raw);
@@ -288,7 +290,7 @@ fn check_leading_arrow(lines: &[&str]) -> Result<(), ParseError> {
                 expected: "node identifier".to_string(),
             });
         }
-        previous = trimmed.to_string();
+        previous = trimmed;
     }
     Ok(())
 }

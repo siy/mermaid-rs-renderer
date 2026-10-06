@@ -6590,6 +6590,35 @@ fn count_indent(line: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    #[ignore = "manual scaling benchmark; run optimized with --nocapture"]
+    fn performance_scaling_continuations_and_entities() {
+        use std::hint::black_box;
+        use std::time::Instant;
+        for count in [128, 512, 2048, 8192] {
+            let mut source = String::from("flowchart TD\n N0\n");
+            for i in 1..=count {
+                source.push_str(&format!(
+                    " -->|Unicode 日本語 #amp; arrow --> text| N{i}[Node #lt;{i}#gt;]\n"
+                ));
+            }
+            let mut samples = Vec::new();
+            for _ in 0..3 {
+                let start = Instant::now();
+                crate::validator::validate(black_box(&source)).unwrap();
+                let parsed = parse_mermaid(black_box(&source)).unwrap();
+                samples.push(start.elapsed());
+                assert_eq!(parsed.graph.edges.len(), count);
+                black_box(parsed);
+            }
+            samples.sort();
+            println!(
+                "continuations,{count},{:.3}",
+                samples[1].as_secs_f64() * 1000.0
+            );
+        }
+    }
     use super::*;
     use crate::ir::DiagramKind;
 

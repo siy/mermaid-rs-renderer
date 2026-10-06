@@ -3,6 +3,7 @@
 use crate::ir::Graph;
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
+use std::borrow::Cow;
 
 static ENTITIES: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"&(?:#[xX][0-9a-fA-F]+|#[0-9]+|[A-Za-z][A-Za-z0-9]+);|#([A-Za-z0-9]+);")
@@ -12,24 +13,26 @@ static ENTITIES: Lazy<Regex> = Lazy::new(|| {
 fn decode(label: &mut String) {
     // Normalize Mermaid #name;/#123; entities, then decode exactly once. Doing
     // this after parsing preserves escaped syntax; SVG still XML-escapes text.
-    *label = ENTITIES
-        .replace_all(label, |captures: &Captures<'_>| {
-            let original = &captures[0];
-            let normalized = match captures.get(1) {
-                Some(entity) if entity.as_str().bytes().all(|ch| ch.is_ascii_digit()) => {
-                    format!("&#{};", entity.as_str())
-                }
-                Some(entity) => format!("&{};", entity.as_str()),
-                None => original.to_string(),
-            };
-            let decoded = html_escape::decode_html_entities(&normalized);
-            if decoded == normalized {
-                original.to_string()
-            } else {
-                decoded.into_owned()
+    let decoded = ENTITIES.replace_all(label, |captures: &Captures<'_>| {
+        let original = &captures[0];
+        let normalized = match captures.get(1) {
+            Some(entity) if entity.as_str().bytes().all(|ch| ch.is_ascii_digit()) => {
+                format!("&#{};", entity.as_str())
             }
-        })
-        .into_owned();
+            Some(entity) => format!("&{};", entity.as_str()),
+            None => original.to_string(),
+        };
+        let decoded = html_escape::decode_html_entities(&normalized);
+        if decoded == normalized {
+            original.to_string()
+        } else {
+            decoded.into_owned()
+        }
+    });
+    // Most labels contain no entities. Keep their existing allocation.
+    if let Cow::Owned(decoded) = decoded {
+        *label = decoded;
+    }
 }
 
 pub(crate) fn decode_labels(graph: &mut Graph) {
