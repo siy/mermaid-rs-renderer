@@ -12,7 +12,8 @@ measurements, not latency guarantees for arbitrary diagrams.
   labels, and edge paths. Static geometry is indexed once, live text bounds are
   updated after each move, and fallback candidates are generated only when
   needed. Segment queries count each intersected edge once. Floating-point
-  overlap sums retain the original obstacle order.
+  overlap sums retain the original obstacle order. Dense queries use an ordered
+  scan when sorting the candidate list would cost more.
 - **Large coordinates:** grid insertion and queries could enumerate cells in
   proportion to rectangle area. Each operation now visits at most 256 cells;
   oversized obstacles are kept separately, and oversized queries scan the index.
@@ -56,7 +57,11 @@ cargo test --locked --profile release-fast --no-default-features --lib \
 ```
 
 The parser probe additionally exercises up to 8,192 continued edges with Unicode,
-entities, and arrow-looking pipe labels. These tests are intentionally ignored in
+entities, and arrow-looking pipe labels (70.780 ms at 8,192 edges in a separate
+all-features run). A dense attachment probe deliberately overlays all geometry
+to expose the residual dense-intersection cost: 1.268 / 15.985 / 258.439 ms
+for 128 / 512 / 2,048 overlaid labels in the final all-features probe. This remains
+quadratic as expected; it is not hidden by the sparse-case speedups. These tests are intentionally ignored in
 normal CI; elapsed-time assertions would be unreliable across runners. Ordinary
 unit tests compare indexed results with direct scans, verify sparse candidate
 counts, and cover oversized coordinates, moves, nested ranges, and invalid ranges.

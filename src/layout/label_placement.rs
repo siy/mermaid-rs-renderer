@@ -2029,8 +2029,7 @@ fn enforce_center_label_attachment_caps(
                         continue;
                     }
                     // Preserve the previous index order for floating-point sums.
-                    let mut nearby: Vec<_> = label_grid.query(&rect).collect();
-                    nearby.sort_unstable();
+                    let nearby = label_grid.query_ordered(&rect);
                     for other in nearby {
                         if other != idx
                             && let Some(other_rect) = current_label_rects[other]
@@ -3962,10 +3961,24 @@ impl ObstacleGrid {
             .filter(move |index| seen.insert(*index))
     }
 
-    fn overlap_sum(&self, rect: &Rect, obstacles: &[Rect]) -> f32 {
+    /// Preserve summation order without adding a sorting bottleneck in dense
+    /// diagrams. If sorting the hits would cost more than a full ordered scan,
+    /// return all obstacles; exact overlap checks discard the extra candidates.
+    fn query_ordered(&self, rect: &Rect) -> Vec<usize> {
         let mut nearby: Vec<_> = self.query(rect).collect();
-        nearby.sort_unstable();
-        nearby
+        let sort_work = nearby
+            .len()
+            .saturating_mul(nearby.len().checked_ilog2().unwrap_or(0) as usize + 1);
+        if sort_work > self.indices.len() {
+            self.indices.iter().copied().collect()
+        } else {
+            nearby.sort_unstable();
+            nearby
+        }
+    }
+
+    fn overlap_sum(&self, rect: &Rect, obstacles: &[Rect]) -> f32 {
+        self.query_ordered(rect)
             .into_iter()
             .map(|index| overlap_area(rect, &obstacles[index]))
             .sum()
@@ -4407,6 +4420,16 @@ mod tests {
     #[test]
     #[ignore = "manual scaling benchmark; run optimized with --nocapture"]
     fn performance_scaling_attachment() {
+        attachment_scaling(false);
+    }
+
+    #[test]
+    #[ignore = "manual scaling benchmark; run optimized with --nocapture"]
+    fn performance_scaling_dense_attachment() {
+        attachment_scaling(true);
+    }
+
+    fn attachment_scaling(dense: bool) {
         use std::hint::black_box;
         use std::time::Instant;
         let parsed = crate::parser::parse_mermaid("stateDiagram-v2\n A --> B: label").unwrap();
@@ -4420,8 +4443,8 @@ mod tests {
             let mut nodes = BTreeMap::new();
             let mut edges = Vec::new();
             for i in 0..count {
-                let x = (i % 64) as f32 * 240.0;
-                let y = (i / 64) as f32 * 240.0;
+                let x = if dense { 0.0 } else { (i % 64) as f32 * 240.0 };
+                let y = if dense { 0.0 } else { (i / 64) as f32 * 240.0 };
                 let mut node = template.nodes.values().next().unwrap().clone();
                 node.x = x;
                 node.y = y;
@@ -4453,7 +4476,12 @@ mod tests {
             }
             samples.sort();
             println!(
-                "attachment,{count},{:.3}",
+                "{},{count},{:.3}",
+                if dense {
+                    "dense_attachment"
+                } else {
+                    "attachment"
+                },
                 samples[1].as_secs_f64() * 1000.0
             );
         }
