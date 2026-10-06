@@ -240,6 +240,67 @@ pub fn compute_layout_with_metrics(
     (layout, stage_metrics)
 }
 
+/// Index only groups with a local direction. Walking the sorted membership
+/// lists of each edge endpoint avoids scanning every edge for every group.
+fn externally_connected_subgraphs(graph: &Graph) -> Vec<usize> {
+    if graph.kind != crate::ir::DiagramKind::Flowchart {
+        return Vec::new();
+    }
+    let mut memberships: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (index, group) in graph.subgraphs.iter().enumerate() {
+        if group.direction.is_none() {
+            continue;
+        }
+        for node in &group.nodes {
+            let groups = memberships.entry(node.as_str()).or_default();
+            if groups.last() != Some(&index) {
+                groups.push(index);
+            }
+        }
+    }
+    if memberships.is_empty() {
+        return Vec::new();
+    }
+    let mut connected = vec![false; graph.subgraphs.len()];
+    for edge in &graph.edges {
+        let from = memberships
+            .get(edge.from.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let to = memberships
+            .get(edge.to.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let (mut a, mut b) = (0, 0);
+        while a < from.len() || b < to.len() {
+            match (from.get(a), to.get(b)) {
+                (Some(&left), Some(&right)) if left == right => {
+                    a += 1;
+                    b += 1;
+                }
+                (Some(&left), Some(&right)) if left < right => {
+                    connected[left] = true;
+                    a += 1;
+                }
+                (Some(&left), None) => {
+                    connected[left] = true;
+                    a += 1;
+                }
+                (_, Some(&right)) => {
+                    connected[right] = true;
+                    b += 1;
+                }
+                (None, None) => break,
+            }
+        }
+    }
+    connected
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, crosses)| crosses.then_some(i))
+        .collect()
+}
+
 fn normalize_graph_for_layout(graph: &Graph) -> Cow<'_, Graph> {
     let needs_edge_nodes = graph
         .edges
@@ -253,22 +314,7 @@ fn normalize_graph_for_layout(graph: &Graph) -> Cow<'_, Graph> {
         .iter()
         .any(|id| !graph.nodes.contains_key(id));
 
-    let connected_groups: Vec<usize> = if graph.kind == crate::ir::DiagramKind::Flowchart {
-        graph
-            .subgraphs
-            .iter()
-            .enumerate()
-            .filter_map(|(index, sub)| {
-                let crosses_boundary = graph
-                    .edges
-                    .iter()
-                    .any(|edge| sub.nodes.contains(&edge.from) != sub.nodes.contains(&edge.to));
-                (sub.direction.is_some() && crosses_boundary).then_some(index)
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let connected_groups = externally_connected_subgraphs(graph);
     if !needs_edge_nodes && !needs_sequence_nodes && connected_groups.is_empty() {
         return Cow::Borrowed(graph);
     }
@@ -1620,6 +1666,82 @@ fn requirement_edge_label_text(label: &str, config: &LayoutConfig) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn indexed_subgraph_boundaries_match_membership_scan() {
+        let mut graph = crate::parser::parse_mermaid(
+            "flowchart TD\n A --> B\n B --> C\n C --> D\n D --> D\n Group --> A",
+        )
+        .unwrap()
+        .graph;
+        let ids = ["A", "B", "C", "D", "Group"];
+        for mask in 0..32 {
+            graph.subgraphs.push(crate::ir::Subgraph {
+                id: Some("Group".into()),
+                label: String::new(),
+                nodes: ids
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| mask & (1 << i) != 0)
+                    .flat_map(|(_, id)| [id.to_string(), id.to_string()])
+                    .collect(),
+                direction: (mask % 3 != 0).then_some(Direction::LeftRight),
+                icon: None,
+            });
+        }
+        let expected: Vec<_> = graph
+            .subgraphs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, group)| {
+                (group.direction.is_some()
+                    && graph.edges.iter().any(|edge| {
+                        group.nodes.contains(&edge.from) != group.nodes.contains(&edge.to)
+                    }))
+                .then_some(i)
+            })
+            .collect();
+        assert_eq!(externally_connected_subgraphs(&graph), expected);
+        graph.kind = crate::ir::DiagramKind::State;
+        assert!(externally_connected_subgraphs(&graph).is_empty());
+    }
+
+    #[test]
+    #[ignore = "manual scaling benchmark; run optimized with --nocapture"]
+    fn performance_scaling_subgraphs() {
+        use std::hint::black_box;
+        let template = crate::parser::parse_mermaid("flowchart TD\n A --> B")
+            .unwrap()
+            .graph;
+        for count in [128, 512, 2048] {
+            let mut graph = Graph::new();
+            for i in 0..count {
+                let from = format!("A{i}");
+                let to = format!("B{i}");
+                graph.ensure_node(&from, None, None);
+                graph.ensure_node(&to, None, None);
+                let mut edge = template.edges[0].clone();
+                edge.from = from.clone();
+                edge.to = to.clone();
+                graph.edges.push(edge);
+                graph.subgraphs.push(crate::ir::Subgraph {
+                    id: None,
+                    label: String::new(),
+                    nodes: vec![from, to],
+                    direction: Some(Direction::LeftRight),
+                    icon: None,
+                });
+            }
+            let mut samples = Vec::new();
+            for _ in 0..5 {
+                let start = Instant::now();
+                black_box(normalize_graph_for_layout(black_box(&graph)));
+                samples.push(start.elapsed());
+            }
+            samples.sort();
+            println!("subgraphs,{count},{:.3}", samples[2].as_secs_f64() * 1000.0);
+        }
+    }
     use super::*;
     use crate::ir::{Direction, Graph, NodeShape};
     use crate::layout::ranking::rank_edges_for_manual_layout;
