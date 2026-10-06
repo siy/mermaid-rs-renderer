@@ -266,7 +266,8 @@ fn check_leading_arrow(lines: &[&str]) -> Result<(), ParseError> {
     let mut previous = "";
     for (idx, raw) in lines.iter().enumerate() {
         let line_no = u32_from_index(idx);
-        let trimmed = raw.trim_start();
+        // Use the same quote-aware normalization as parser preprocessing.
+        let trimmed = crate::parser::strip_trailing_comment(raw);
         if trimmed.is_empty() || trimmed.starts_with("%%") {
             continue;
         }

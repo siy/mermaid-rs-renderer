@@ -55,6 +55,13 @@ pub struct ParseOutput {
     pub init_config: Option<serde_json::Value>,
 }
 
+/// Dispatch to the diagram parser, then decode one layer of display-label entities.
+///
+/// # Errors
+///
+/// Returns an error for invalid initialization directives, an unknown diagram
+/// header, or syntax rejected by the selected parser. For typed preflight
+/// diagnostics, use [`crate::parse_mermaid_strict`].
 pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
     validate_init_directives(input)?;
     let Some(kind) = detect_diagram_kind(input) else {
@@ -283,6 +290,7 @@ pub(crate) fn starts_with_edge_token(line: &str) -> bool {
 }
 
 /// Whether a previous statement may absorb a following edge continuation.
+/// The caller must strip trailing comments first, as in preprocessing.
 /// Headers and keyword statements never can, so a malformed document still
 /// fails loudly instead of folding an edge into `flowchart TD`.
 pub(crate) fn accepts_edge_continuation(line: &str) -> bool {
@@ -376,6 +384,8 @@ fn preprocess_input(input: &str) -> Result<(Vec<String>, Option<serde_json::Valu
     Ok((lines, init_config))
 }
 
+/// Remove frontmatter and comments while retaining indentation for nested syntax
+/// and collecting the last initialization directive.
 fn preprocess_input_keep_indent(input: &str) -> Result<(Vec<String>, Option<serde_json::Value>)> {
     let mut init_config: Option<serde_json::Value> = None;
     let mut lines = Vec::new();
@@ -404,12 +414,14 @@ fn preprocess_input_keep_indent(input: &str) -> Result<(Vec<String>, Option<serd
         if without_comment.trim().is_empty() {
             continue;
         }
-        lines.push(without_comment);
+        lines.push(without_comment.to_string());
     }
 
     Ok((lines, init_config))
 }
 
+/// Parse preprocessed statements after joining eligible edge continuations.
+/// Entity decoding remains a later step so label text cannot introduce syntax.
 fn parse_flowchart(input: &str) -> Result<ParseOutput> {
     let mut graph = Graph::new();
     graph.kind = DiagramKind::Flowchart;
@@ -5229,6 +5241,8 @@ fn parse_state_diagram(input: &str) -> Result<ParseOutput> {
     Ok(ParseOutput { graph, init_config })
 }
 
+/// Parse messages, notes, and frame sections, recording half-open message and
+/// note ranges when frames close so layout can distinguish boundary notes.
 fn parse_sequence_diagram(input: &str) -> Result<ParseOutput> {
     let mut graph = Graph::new();
     graph.kind = DiagramKind::Sequence;
@@ -5564,6 +5578,7 @@ fn add_node_to_subgraphs(graph: &mut Graph, subgraph_stack: &[usize], node_id: &
     }
 }
 
+/// Split on semicolons outside node brackets, quotes, and pipe-delimited labels.
 fn split_statements(line: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -5631,58 +5646,32 @@ fn split_statements(line: &str) -> Vec<String> {
     parts
 }
 
-fn strip_trailing_comment(line: &str) -> String {
-    let mut quote: Option<char> = None;
-    let mut chars = line.chars().peekable();
-    let mut out = String::new();
-    while let Some(ch) = chars.next() {
-        if let Some(q) = quote {
-            if ch == q {
-                quote = None;
-            }
-            out.push(ch);
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            quote = Some(ch);
-            out.push(ch);
-            continue;
-        }
-        if ch == '%'
-            && let Some('%') = chars.peek().copied()
-        {
-            break;
-        }
-        out.push(ch);
-    }
-    out.trim().to_string()
+/// Borrow the non-comment portion so validation can normalize individual lines
+/// without allocating or rescanning an accumulated continuation chain.
+pub(crate) fn strip_trailing_comment(line: &str) -> &str {
+    strip_trailing_comment_keep_indent(line).trim_start()
 }
 
-fn strip_trailing_comment_keep_indent(line: &str) -> String {
+/// Borrow the prefix before an unquoted comment marker, preserving leading whitespace.
+fn strip_trailing_comment_keep_indent(line: &str) -> &str {
     let mut quote: Option<char> = None;
-    let mut chars = line.chars().peekable();
-    let mut out = String::new();
-    while let Some(ch) = chars.next() {
+    let mut chars = line.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
         if let Some(q) = quote {
             if ch == q {
                 quote = None;
             }
-            out.push(ch);
             continue;
         }
         if ch == '"' || ch == '\'' {
             quote = Some(ch);
-            out.push(ch);
             continue;
         }
-        if ch == '%'
-            && let Some('%') = chars.peek().copied()
-        {
-            break;
+        if ch == '%' && chars.peek().is_some_and(|(_, next)| *next == '%') {
+            return line[..index].trim_end();
         }
-        out.push(ch);
     }
-    out.trim_end().to_string()
+    line.trim_end()
 }
 
 fn extract_leading_decoration(right: &str) -> Option<(char, String)> {
@@ -5843,6 +5832,8 @@ fn split_on_ampersand(input: &str) -> Vec<&str> {
     parts
 }
 
+/// Split a multi-edge chain while retaining pipe labels on their own edges.
+/// Return None when the statement is not a chain or uses another label syntax.
 fn split_edge_chain(line: &str) -> Option<Vec<String>> {
     // Pipe labels may contain arrow-looking text. Preserve byte offsets while
     // excluding them from the edge scan, just like quoted node labels.
