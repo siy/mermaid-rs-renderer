@@ -60,7 +60,7 @@ pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
     let Some(kind) = detect_diagram_kind(input) else {
         bail!("unknown or missing Mermaid diagram header");
     };
-    match kind {
+    let mut parsed = match kind {
         DiagramKind::Class => parse_class_diagram(input),
         DiagramKind::State => parse_state_diagram(input),
         DiagramKind::Sequence => parse_sequence_diagram(input),
@@ -84,7 +84,9 @@ pub fn parse_mermaid(input: &str) -> Result<ParseOutput> {
         DiagramKind::Treemap => parse_treemap_diagram(input),
         DiagramKind::XYChart => parse_xy_chart_diagram(input),
         DiagramKind::Flowchart => parse_flowchart(input),
-    }
+    }?;
+    crate::entities::decode_labels(&mut parsed.graph);
+    Ok(parsed)
 }
 
 fn validate_init_directives(input: &str) -> Result<()> {
