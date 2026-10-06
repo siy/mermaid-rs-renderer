@@ -5567,6 +5567,7 @@ fn split_statements(line: &str) -> Vec<String> {
     let mut depth = 0i32;
     let mut quote: Option<char> = None;
     let mut escaped = false;
+    let mut in_pipe_label = false;
 
     for ch in line.chars() {
         if escaped {
@@ -5595,6 +5596,9 @@ fn split_statements(line: &str) -> Vec<String> {
             continue;
         }
 
+        if ch == '|' && depth == 0 {
+            in_pipe_label = !in_pipe_label;
+        }
         match ch {
             '[' | '(' | '{' => {
                 depth += 1;
@@ -5606,7 +5610,7 @@ fn split_statements(line: &str) -> Vec<String> {
                 }
                 current.push(ch);
             }
-            ';' if depth == 0 => {
+            ';' if depth == 0 && !in_pipe_label => {
                 let trimmed = current.trim();
                 if !trimmed.is_empty() {
                     parts.push(trimmed.to_string());
@@ -5837,9 +5841,19 @@ fn split_on_ampersand(input: &str) -> Vec<&str> {
 }
 
 fn split_edge_chain(line: &str) -> Option<Vec<String>> {
-    let masked = mask_bracket_content(line);
-    if PIPE_LABEL_RE.is_match(&masked)
-        || QUOTED_LABEL_ARROW_RE.is_match(line)
+    // Pipe labels may contain arrow-looking text. Preserve byte offsets while
+    // excluding them from the edge scan, just like quoted node labels.
+    let mut masked = mask_bracket_content(line).into_bytes();
+    let mut in_label = false;
+    for byte in &mut masked {
+        if *byte == b'|' {
+            in_label = !in_label;
+        } else if in_label {
+            *byte = b' ';
+        }
+    }
+    let masked = String::from_utf8(masked).expect("mask preserves UTF-8");
+    if QUOTED_LABEL_ARROW_RE.is_match(line)
         || LABEL_ARROW_RE.is_match(&masked)
         || COMPACT_DOTTED_LABEL_ARROW_RE.is_match(&masked)
     {
