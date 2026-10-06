@@ -95,7 +95,7 @@ pub(super) fn compute_quadrant_layout(
         .unwrap_or(padding);
 
     let base_grid_x = y_axis_width + padding;
-    let grid_y = title_height + padding;
+    let base_grid_y = title_height + padding;
 
     // Measure points before fixing the canvas bounds. QuadrantPointLayout has a
     // single anchor shared by the marker and its label, so reserve any label
@@ -128,6 +128,13 @@ pub(super) fn compute_quadrant_layout(
         })
         .fold(0.0, f32::max);
 
+    // Wrapped labels can also extend vertically beyond the grid. Translate
+    // the grid (and title) as a whole so data coordinates remain unchanged.
+    let grid_y = measured_points
+        .iter()
+        .map(|(_, y, label, _)| label.height / 2.0 - (1.0 - y) * grid_size)
+        .fold(base_grid_y, f32::max);
+
     let points: Vec<QuadrantPointLayout> = measured_points
         .into_iter()
         .map(|(x, y, label, color)| QuadrantPointLayout {
@@ -139,7 +146,10 @@ pub(super) fn compute_quadrant_layout(
         .collect();
 
     let width = base_width + left_overflow + right_overflow;
-    let height = grid_y + grid_size + x_axis_height + padding;
+    let height = points
+        .iter()
+        .map(|point| point.y + point.label.height / 2.0)
+        .fold(grid_y + grid_size + x_axis_height + padding, f32::max);
 
     Layout {
         kind: graph.kind,
@@ -150,7 +160,7 @@ pub(super) fn compute_quadrant_layout(
         height,
         diagram: DiagramData::Quadrant(QuadrantLayout {
             title,
-            title_y: title_height / 2.0,
+            title_y: title_height / 2.0 + (grid_y - base_grid_y),
             x_axis_left: x_left,
             x_axis_right: x_right,
             y_axis_bottom: y_bottom,
