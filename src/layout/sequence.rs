@@ -247,7 +247,8 @@ pub(super) fn compute_sequence_layout(
         .collect();
 
     let mut extra_before = vec![0.0; graph.edges.len()];
-    let frame_end_pad = base_spacing * 0.25;
+    let frame_end_pad = (theme.font_size * 0.85).max(12.0);
+    let mut frame_end_padding: BTreeMap<(usize, usize), f32> = BTreeMap::new();
     for frame in &graph.sequence_frames {
         if frame.start_idx < extra_before.len() {
             extra_before[frame.start_idx] += base_spacing;
@@ -257,9 +258,9 @@ pub(super) fn compute_sequence_layout(
                 extra_before[section.start_idx] += base_spacing;
             }
         }
-        if frame.end_idx < extra_before.len() {
-            extra_before[frame.end_idx] += frame_end_pad;
-        }
+        *frame_end_padding
+            .entry((frame.end_idx, frame.note_range.end))
+            .or_default() += frame_end_pad;
     }
 
     let mut notes_by_index = vec![Vec::new(); graph.edges.len().saturating_add(1)];
@@ -274,6 +275,9 @@ pub(super) fn compute_sequence_layout(
     for idx in 0..=graph.edges.len() {
         if let Some(bucket) = notes_by_index.get(idx) {
             for note in bucket {
+                message_cursor += frame_end_padding
+                    .remove(&(idx, sequence_notes.len()))
+                    .unwrap_or(0.0);
                 message_cursor += geometry.note_gap_y;
                 let label = measure_sequence_text(&note.label, theme, config);
                 let mut width =
@@ -318,9 +322,15 @@ pub(super) fn compute_sequence_layout(
                 message_cursor += height;
             }
         }
+        message_cursor += frame_end_padding
+            .remove(&(idx, sequence_notes.len()))
+            .unwrap_or(0.0);
         if idx < graph.edges.len() {
             message_cursor += extra_before[idx] + message_row_spacing[idx];
             message_ys.push(message_cursor);
+            if graph.edges[idx].from == graph.edges[idx].to {
+                message_cursor += geometry.note_gap_x * 1.4;
+            }
         }
     }
 
@@ -421,9 +431,31 @@ pub(super) fn compute_sequence_layout(
                 continue;
             }
 
+            // Include self-message bends, message labels, and only notes actually
+            // inside this frame. Participant centers alone collapse single-lane loops.
+            for edge in &edges[frame.start_idx..frame.end_idx.min(edges.len())] {
+                for (x, _) in &edge.points {
+                    min_center_x = min_center_x.min(*x);
+                    max_center_x = max_center_x.max(*x);
+                }
+                if let Some(label) = &edge.label {
+                    let center = (edge.points[0].0 + edge.points.last().unwrap().0) * 0.5;
+                    min_center_x = min_center_x.min(center - label.width * 0.5);
+                    max_center_x = max_center_x.max(center + label.width * 0.5);
+                }
+            }
+            for note in sequence_notes
+                .iter()
+                .skip(frame.note_range.start)
+                .take(frame.note_range.len())
+            {
+                min_center_x = min_center_x.min(note.x);
+                max_center_x = max_center_x.max(note.x + note.width);
+            }
             let frame_pad_x = (theme.font_size * 0.7).max(11.0);
             let frame_x = min_center_x - frame_pad_x;
-            let frame_width = (max_center_x - min_center_x) + frame_pad_x + theme.font_size * 1.05;
+            let mut frame_width =
+                (max_center_x - min_center_x) + frame_pad_x + theme.font_size * 1.05;
 
             let first_y = message_ys
                 .get(frame.start_idx)
@@ -434,9 +466,12 @@ pub(super) fn compute_sequence_layout(
                 .copied()
                 .unwrap_or(first_y);
             let mut min_y = first_y;
-            let mut max_y = last_y;
-            for note in &sequence_notes {
-                if note.index >= frame.start_idx && note.index <= frame.end_idx {
+            let mut max_y = edges[frame.start_idx..frame.end_idx.min(edges.len())]
+                .iter()
+                .flat_map(|edge| edge.points.iter().map(|p| p.1))
+                .fold(last_y, f32::max);
+            for (note_idx, note) in sequence_notes.iter().enumerate() {
+                if frame.note_range.contains(&note_idx) {
                     min_y = min_y.min(note.y);
                     max_y = max_y.max(note.y + note.height);
                 }
@@ -459,6 +494,13 @@ pub(super) fn compute_sequence_layout(
             let label_box_w =
                 (label_block.width + theme.font_size * 1.2).max(theme.font_size * 3.1);
             let label_box_h = (theme.font_size * 1.25).max(20.0);
+            for section in &frame.sections {
+                if let Some(label) = &section.label {
+                    let block = measure_sequence_text(&format!("[{label}]"), theme, config);
+                    frame_width =
+                        frame_width.max(label_box_w + block.width + theme.font_size * 1.5);
+                }
+            }
             let label_box_x = frame_x;
             let label_box_y = frame_y;
             let label = SequenceLabel {
@@ -485,13 +527,14 @@ pub(super) fn compute_sequence_layout(
                     let display = format!("[{}]", label);
                     let block = measure_sequence_text(&display, theme, config);
                     let label_y = if section_idx == 0 {
-                        frame_y + label_box_h - theme.font_size * 0.15
+                        frame_y + label_box_h.max(block.height) * 0.5 + theme.font_size * 0.25
                     } else {
                         dividers
                             .get(section_idx - 1)
                             .copied()
                             .unwrap_or(frame_y + label_offset)
-                            + theme.font_size * 0.9
+                            + block.height * 0.5
+                            + theme.font_size * 0.3
                     };
                     let side_pad = theme.font_size * 0.45;
                     let frame_center_x = frame_x + frame_width / 2.0;
@@ -505,7 +548,8 @@ pub(super) fn compute_sequence_layout(
                     let label_x = if section_idx == 0 {
                         let preferred =
                             frame_x + label_box_w + theme.font_size * 3.0 + block.width / 2.0;
-                        let min_x = frame_x + block.width / 2.0 + theme.font_size * 0.4;
+                        let min_x =
+                            frame_x + label_box_w + block.width / 2.0 + theme.font_size * 0.4;
                         let max_x =
                             frame_x + frame_width - block.width / 2.0 - theme.font_size * 0.4;
                         clamp_or_midpoint(preferred, min_x, max_x)
@@ -544,6 +588,10 @@ pub(super) fn compute_sequence_layout(
         .unwrap_or(lifeline_start + base_spacing);
     for note in &sequence_notes {
         last_message_y = last_message_y.max(note.y + note.height);
+    }
+    last_message_y = last_message_y.max(message_cursor);
+    for frame in &sequence_frames {
+        last_message_y = last_message_y.max(frame.y + frame.height);
     }
     let lifeline_end = last_message_y + geometry.footbox_gap;
     let lifelines = participants

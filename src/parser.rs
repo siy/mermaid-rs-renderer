@@ -5313,6 +5313,7 @@ fn parse_sequence_diagram(input: &str) -> Result<ParseOutput> {
             };
             let start_idx = graph.edges.len();
             open_frames.push(crate::ir::SequenceFrame {
+                note_range: graph.sequence_notes.len()..graph.sequence_notes.len(),
                 kind,
                 sections: vec![crate::ir::SequenceFrameSection {
                     label,
@@ -5399,6 +5400,7 @@ fn parse_sequence_diagram(input: &str) -> Result<ParseOutput> {
                     last.end_idx = end_idx;
                 }
                 frame.end_idx = end_idx;
+                frame.note_range.end = graph.sequence_notes.len();
                 frames.push(frame);
             } else if let Some(seq_box) = open_boxes.pop() {
                 graph.sequence_boxes.push(seq_box);
@@ -5520,6 +5522,7 @@ fn parse_sequence_diagram(input: &str) -> Result<ParseOutput> {
             last.end_idx = end_idx;
         }
         frame.end_idx = end_idx;
+        frame.note_range.end = graph.sequence_notes.len();
         frames.push(frame);
     }
     while let Some(seq_box) = open_boxes.pop() {
